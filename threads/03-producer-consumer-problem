@@ -1,0 +1,145 @@
+#include <pthread.h>
+
+/**
+ * @brief producer and consumer broken solution 1
+ */
+
+int buffer;         // use a single integer but can be imagined as
+                    // a pointer to another data structure
+int count = 0;
+
+void put_v1(int value) {
+    assert(count == 0);
+    count = 1;
+    buffer = value;
+}
+
+int get_v1() {
+    assert(count == 1);
+    count = 0;
+    return buffer;
+}
+
+void *producer_naive(void *arg) {
+    int i;
+    int loops = (int) arg;
+    for (i = 0; i < loops; i++) {
+        put(i);
+    }
+}
+
+void *consumer_naive(void *arg) {
+    while (1) {
+        int temp = get();
+        printf("%d\n", temp);
+    }
+}
+
+/**
+ * @brief producer and consumer broken solution 2
+ * Using mutex and condition variable - works for a single
+ * producer thread and a single consumer thread.
+ *
+ * Problem: we only have one condition.
+ * What if producer1 and consumer1 is asleep, and consumer2
+ * is running, when it tries to signal on CV, which thread
+ * should it wake up? If it wakes up consumer1, then all
+ * three threads will be sleeping.
+ */
+
+int loops;
+pthread_cond_t cond;
+pthread_mutex_t mutex;
+
+void *producer_v2(void *args) {
+    int i;
+    for (i = 0; i < loops; i++) {
+        pthread_mutex_lock(&mutex);
+        // Has to be 'while' instead of 'if' to make sure
+        // that after waking up from the wait and before
+        // putting values into buffer, the buffer is empty and
+        // not filled by a third thread.
+        // see: Mesa semantics
+        while (count == 1)
+            // waits for the buffer to be empty
+            pthread_cond_wait(&cond, &mutex);
+        put(i);
+        pthread_cond_signal(&cond);
+        pthread_mutex_unlock(&mutex);
+    }
+}
+
+void *consumer_v2(void *args) {
+    int i;
+    for (i = 0; i < loops; i++) {
+        pthread_mutex_lock(&mutex);
+        // Has to be 'while' instead of 'if' to make sure
+        // that after waking up and before consuming the
+        // buffer, the buffer is full and not consumed by
+        // a third thread.
+        while (count == 0)
+            // waits for the buffer to be full
+            pthread_cond_wait(&cond, &mutex);
+        int temp = get();
+        pthread_cond_signal(&cond);
+        pthread_mutex_unlock(&mutex);
+        printf("%d\n", temp);
+    }
+}
+
+/**
+ * @brief producer and consumer - two CVs and while
+ *
+ * This is a working solution
+ *
+ */
+
+#define MAX 100
+int newBuffer[MAX];
+int fill_ptr = 0;
+int use_ptr = 0;
+// int count = 0;  already defined
+
+void put(int value) {
+    newBuffer[fill_ptr] = value;
+    fill_ptr = (fill_ptr + 1) % MAX;
+    count++;
+}
+
+int get() {
+    int temp = newBuffer[use_ptr];
+    use_ptr = (use_ptr + 1) % MAX;
+    count--;
+    return temp;
+}
+
+// mutex already defined
+pthread_cond_t empty, fill;
+
+
+void *producer_v3(void *args) {
+    int i;
+    for (i = 0; i < loops; i++) {
+        pthread_mutex_lock(&mutex);
+        while (count == MAX)
+            // waits on the condition empty
+            pthread_cond_wait(&empty, &mutex);
+        put(i);
+        // signals fill after filling the buffer
+        pthread_cond_signal(&fill);
+        pthread_mutex_unlock(&mutex);
+    }
+}
+
+void *consumer_v3(void *args) {
+    int i;
+    for (i = 0; i < loops; i++) {
+        pthread_mutex_lock(&mutex);
+        while (count == 0)
+            pthread_cond_wait(&fill, &mutex);
+        int temp = get();
+        pthread_cond_signal(&empty);
+        pthread_mutex_unlock(&mutex);
+        printf("%d\n", temp);
+    }
+}
